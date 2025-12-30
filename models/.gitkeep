@@ -1,0 +1,16 @@
+# Trained model weights go here
+# Files are gitignored - download separately or train locally
+#
+# Expected structure:
+# models/
+# ├── momentum/
+# │   └── lstm_v1.0.0.pt
+# ├── mean_reversion/
+# │   ├── regime_classifier_v1.0.0.pkl
+# │   └── param_optimizer_v1.0.0.pkl
+# ├── volatility/
+# │   ├── breakout_cnn_v1.0.0.pt
+# │   └── entry_dqn_v1.0.0.pt
+# └── meta/
+#     └── signal_combiner_v1.0.0.pkl
+

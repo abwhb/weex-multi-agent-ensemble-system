@@ -1,0 +1,9 @@
+# AI decision logs for competition submission
+#
+# Log files generated:
+# - ai_decisions.json: All AI decisions with full traceability
+# - app.log: General application logs
+#
+# Export format for submission:
+# - ai_decisions_export.json: Competition-ready export
+
