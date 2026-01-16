@@ -8,7 +8,15 @@
     "start": "node dist/index.js",
     "dev": "ts-node src/index.ts",
     "test": "jest",
-    "lint": "eslint src/**/*.ts"
+    "lint": "eslint src/**/*.ts",
+    "backtest": "ts-node src/backtest/run-backtest.ts",
+    "backtest:btc": "ts-node src/backtest/run-backtest.ts --symbol BTC --days 30 -v",
+    "backtest:eth": "ts-node src/backtest/run-backtest.ts --symbol ETH --days 30 -v",
+    "backtest:sol": "ts-node src/backtest/run-backtest.ts --symbol SOL --days 30 -v",
+    "backtest:all": "npm run backtest:btc && npm run backtest:eth && npm run backtest:sol",
+    "paper": "ts-node src/simulation/run-paper-trading.ts",
+    "paper:fast": "ts-node src/simulation/run-paper-trading.ts --update 30",
+    "dashboard": "ts-node src/simulation/live-dashboard.ts"
   },
   "keywords": [
     "ai",
@@ -37,4 +45,3 @@
     "@typescript-eslint/parser": "^6.13.0"
   }
 }
-

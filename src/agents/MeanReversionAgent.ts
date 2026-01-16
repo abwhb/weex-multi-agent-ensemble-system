@@ -58,6 +58,7 @@
 
 import { BaseAgent, AgentSignal, AgentConfig } from './BaseAgent';
 import { MarketData, MarketRegime, OHLCV } from '../types';
+import { RSI, BollingerBands, ATR, ADX, VolumeRatio, SMA, normalize } from '../indicators';
 
 // ============================================================================
 // Types
