@@ -28,7 +28,7 @@ import * as fs from 'fs';
 import * as path from 'path';
 import { TradeDecision } from '../meta-learner/Ensemble';
 import { AgentSignal } from '../agents/BaseAgent';
-import { AILogEntry, MarketRegime } from '../types';
+import { MarketRegime } from '../types';
 
 // ============================================================================
 // Interfaces
