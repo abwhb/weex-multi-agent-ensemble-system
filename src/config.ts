@@ -147,6 +147,28 @@ export const config = {
     requestTimeout: 30000,
     /** Enable debug mode. */
     debug: process.env.DEBUG === 'true'
+  },
+
+  /**
+   * Database configuration.
+   */
+  database: {
+    /** Path to SQLite database file. */
+    path: process.env.DB_PATH || './data/paper_trading.db',
+    /** Whether to run migrations on startup. */
+    runMigrations: process.env.DB_MIGRATE !== 'false'
+  },
+
+  /**
+   * Paper trading configuration.
+   */
+  paperTrading: {
+    /** Initial account balance for paper trading (USDT). */
+    initialBalance: parseFloat(process.env.PAPER_INITIAL_BALANCE || '10000'),
+    /** Fee rate for paper trading (0.001 = 0.1%). */
+    feeRate: parseFloat(process.env.PAPER_FEE_RATE || '0.001'),
+    /** Slippage rate for paper trading (0.0005 = 0.05%). */
+    slippageRate: parseFloat(process.env.PAPER_SLIPPAGE_RATE || '0.0005')
   }
 };
 
@@ -196,7 +218,9 @@ export function getConfigSummary(): Record<string, unknown> {
     maxLeverage: config.trading.maxLeverage,
     riskPerTrade: config.trading.riskPerTrade,
     minConfidence: config.ensemble.minConfidence,
-    logLevel: config.logging.level
+    logLevel: config.logging.level,
+    databasePath: config.database.path,
+    paperInitialBalance: config.paperTrading.initialBalance
   };
 }
 

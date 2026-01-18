@@ -22,16 +22,18 @@
 
 import axios, { AxiosInstance, AxiosError } from 'axios';
 import * as crypto from 'crypto';
-import { 
-  OHLCV, 
-  Order, 
-  Position, 
-  OrderSide, 
-  OrderType, 
+import {
+  OHLCV,
+  Order,
+  Position,
+  OrderSide,
+  OrderType,
   AllowedPair,
-  ALLOWED_PAIRS 
+  ALLOWED_PAIRS
 } from '../types';
 import { config } from '../config';
+import { TradingController } from '../control';
+import { PaperTradingEngine } from './PaperTradingEngine';
 
 // ============================================================================
 // Interfaces
@@ -134,27 +136,56 @@ export interface Ticker {
 export class WeexClient {
   /** Axios instance for API calls. */
   private client: AxiosInstance | null = null;
-  
+
   /** API credentials. */
   private apiKey: string;
   private apiSecret: string;
   private passphrase: string;
-  
+
   /** Base URL for API. */
   private baseUrl: string;
-  
+
   /** Rate limiting. */
   private lastRequestTime: number = 0;
   private minRequestInterval: number = 100; // ms
-  
+
   /** Connection status. */
   private isConnected: boolean = false;
 
-  constructor() {
+  /** Trading controller for enable/disable trading. */
+  private tradingController: TradingController | null = null;
+
+  /** Paper trading engine for simulation. */
+  private paperEngine: PaperTradingEngine | null = null;
+
+  constructor(
+    tradingController?: TradingController,
+    paperEngine?: PaperTradingEngine
+  ) {
     this.apiKey = config.weex.apiKey;
     this.apiSecret = config.weex.apiSecret;
     this.passphrase = config.weex.passphrase;
     this.baseUrl = config.weex.baseUrl;
+
+    if (tradingController) {
+      this.tradingController = tradingController;
+    }
+    if (paperEngine) {
+      this.paperEngine = paperEngine;
+    }
+  }
+
+  /**
+   * Check if we should use paper trading.
+   * Paper trading is used when:
+   * 1. TradingController exists and trading is disabled (default)
+   * 2. Or config.trading.mode is 'paper'
+   */
+  private usePaperTrading(): boolean {
+    if (this.tradingController) {
+      return !this.tradingController.isEnabled();
+    }
+    return config.trading.mode === 'paper';
   }
 
   // ==========================================================================
@@ -164,15 +195,23 @@ export class WeexClient {
   /**
    * Initialize API connection with credentials.
    * Validates credentials and tests connectivity.
+   * In paper trading mode, no live API connection is required.
    */
   async connect(): Promise<void> {
+    // If using paper trading, no need for live API connection
+    if (this.usePaperTrading() && this.paperEngine) {
+      console.log('Paper trading mode active - using simulated exchange');
+      this.isConnected = true;
+      return;
+    }
+
     console.log('Connecting to WEEX API...');
-    
+
     // Validate credentials
     if (!this.apiKey || !this.apiSecret) {
       throw new Error('WEEX API credentials not configured. Set WEEX_API_KEY and WEEX_API_SECRET.');
     }
-    
+
     // Initialize axios instance
     this.client = axios.create({
       baseURL: this.baseUrl,
@@ -182,7 +221,7 @@ export class WeexClient {
         'X-API-KEY': this.apiKey
       }
     });
-    
+
     // Add request interceptor for signing
     this.client.interceptors.request.use((config) => {
       const timestamp = Date.now().toString();
@@ -192,14 +231,14 @@ export class WeexClient {
         timestamp,
         config.data ? JSON.stringify(config.data) : ''
       );
-      
+
       config.headers['X-TIMESTAMP'] = timestamp;
       config.headers['X-SIGNATURE'] = signature;
       config.headers['X-PASSPHRASE'] = this.passphrase;
-      
+
       return config;
     });
-    
+
     // Test connection
     try {
       await this.getBalance();
@@ -340,15 +379,24 @@ export class WeexClient {
 
   /**
    * Place an order on the exchange.
-   * 
+   * Routes to paper trading engine when trading is disabled.
+   *
    * @param params - Order parameters
+   * @param currentPrice - Current market price (used for paper trading)
    * @returns Created order with ID
    */
-  async placeOrder(params: OrderParams): Promise<Order> {
+  async placeOrder(params: OrderParams, currentPrice?: number): Promise<Order> {
     this.ensureConnected();
     this.validateSymbol(params.symbol);
     this.validateOrderParams(params);
-    
+
+    // Route to paper trading if disabled
+    if (this.usePaperTrading() && this.paperEngine) {
+      const price = currentPrice ?? (await this.getTicker(params.symbol)).lastPrice;
+      console.log(`[PAPER] Placing ${params.type} ${params.side} order for ${params.symbol}: size=${params.size}`);
+      return this.paperEngine.executeOrder(params, price);
+    }
+
     return this.rateLimitedRequest(async () => {
       // PLACEHOLDER: Actual API call
       // const response = await this.client!.post<ApiResponse<Order>>('/api/v1/trade/order', {
@@ -362,9 +410,9 @@ export class WeexClient {
       //   takeProfit: params.takeProfit,
       //   clientOrderId: params.clientOrderId
       // });
-      
-      console.log(`Placing ${params.type} ${params.side} order for ${params.symbol}: size=${params.size}`);
-      
+
+      console.log(`[LIVE] Placing ${params.type} ${params.side} order for ${params.symbol}: size=${params.size}`);
+
       const order: Order = {
         id: `ord_${Date.now()}_${Math.random().toString(36).substr(2, 9)}`,
         symbol: params.symbol,
@@ -376,7 +424,7 @@ export class WeexClient {
         takeProfit: params.takeProfit,
         timestamp: Date.now()
       };
-      
+
       return order;
     });
   }
@@ -432,21 +480,27 @@ export class WeexClient {
 
   /**
    * Get current open positions.
-   * 
+   * Routes to paper trading engine when trading is disabled.
+   *
    * @param symbol - Optional symbol filter
    * @returns Array of open positions
    */
   async getPositions(symbol?: AllowedPair): Promise<Position[]> {
     this.ensureConnected();
     if (symbol) this.validateSymbol(symbol);
-    
+
+    // Route to paper trading if disabled
+    if (this.usePaperTrading() && this.paperEngine) {
+      return this.paperEngine.getPositions(symbol);
+    }
+
     return this.rateLimitedRequest(async () => {
       // PLACEHOLDER: Actual API call
       // const response = await this.client!.get<ApiResponse<Position[]>>('/api/v1/position/list', {
       //   params: symbol ? { symbol: `${symbol}USDT` } : {}
       // });
-      
-      console.log(`Fetching positions${symbol ? ` for ${symbol}` : ''}`);
+
+      console.log(`[LIVE] Fetching positions${symbol ? ` for ${symbol}` : ''}`);
       return [];
     });
   }
@@ -482,18 +536,22 @@ export class WeexClient {
 
   /**
    * Get account balance.
-   * 
+   * Routes to paper trading engine when trading is disabled.
+   *
    * @returns Balance information
    */
   async getBalance(): Promise<Balance[]> {
-    // Don't enforce connection check here (used during connect)
-    
+    // Route to paper trading if disabled
+    if (this.usePaperTrading() && this.paperEngine) {
+      return this.paperEngine.getBalance();
+    }
+
     return this.rateLimitedRequest(async () => {
       // PLACEHOLDER: Actual API call
       // const response = await this.client!.get<ApiResponse<Balance[]>>('/api/v1/account/balance');
-      
-      console.log('Fetching account balance');
-      
+
+      console.log('[LIVE] Fetching account balance');
+
       return [
         {
           currency: 'USDT',
