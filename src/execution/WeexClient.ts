@@ -597,10 +597,15 @@ export class WeexClient {
 
   /**
    * Ensure client is connected.
+   * In paper trading mode, client may be null but isConnected will be true.
    */
   private ensureConnected(): void {
-    if (!this.isConnected || !this.client) {
+    if (!this.isConnected) {
       throw new Error('Not connected to WEEX API. Call connect() first.');
+    }
+    // In live trading mode, client must exist
+    if (!this.usePaperTrading() && !this.client) {
+      throw new Error('API client not initialized. Call connect() first.');
     }
   }
 

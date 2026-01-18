@@ -42,6 +42,20 @@ export class OrderRepository {
   }
 
   createOrder(input: CreateOrderInput): DbOrder {
+    // Input validation
+    if (!input.order_id || input.order_id.trim() === '') {
+      throw new Error('Order ID is required');
+    }
+    if (!input.symbol || input.symbol.trim() === '') {
+      throw new Error('Order symbol is required');
+    }
+    if (input.size <= 0) {
+      throw new Error('Order size must be positive');
+    }
+    if (input.type === 'limit' && (input.price === undefined || input.price <= 0)) {
+      throw new Error('Limit orders require a positive price');
+    }
+
     this.db.run(
       `INSERT INTO orders (order_id, trade_id, symbol, side, type, size, price, reduce_only, status)
        VALUES (?, ?, ?, ?, ?, ?, ?, ?, 'pending')`,
@@ -57,7 +71,11 @@ export class OrderRepository {
       ]
     );
 
-    return this.getOrderById(input.order_id)!;
+    const order = this.getOrderById(input.order_id);
+    if (!order) {
+      throw new Error(`Failed to create order ${input.order_id}`);
+    }
+    return order;
   }
 
   getOrderById(orderId: string): DbOrder | undefined {

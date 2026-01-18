@@ -184,6 +184,7 @@ export class PaperTradingEngine {
     if (!position) return null;
 
     const isLong = position.side === 'long';
+    const positionSize = position.size;
 
     // Check stop loss
     if (position.stop_loss) {
@@ -192,7 +193,8 @@ export class PaperTradingEngine {
         : currentPrice >= position.stop_loss;
 
       if (stopHit) {
-        return this.createCloseOrder(symbol, position.size, currentPrice, 'stop_loss');
+        const order = this.createCloseOrder(symbol, positionSize, currentPrice, 'stop_loss');
+        return order; // may be null if position was already closed
       }
     }
 
@@ -203,16 +205,22 @@ export class PaperTradingEngine {
         : currentPrice <= position.take_profit;
 
       if (tpHit) {
-        return this.createCloseOrder(symbol, position.size, currentPrice, 'take_profit');
+        const order = this.createCloseOrder(symbol, positionSize, currentPrice, 'take_profit');
+        return order; // may be null if position was already closed
       }
     }
 
     return null;
   }
 
-  private createCloseOrder(symbol: string, size: number, price: number, reason: string): Order {
+  private createCloseOrder(symbol: string, size: number, price: number, reason: string): Order | null {
     const position = this.positionRepo.getPosition(symbol);
-    const side: OrderSide = position?.side === 'long' ? 'sell' : 'buy';
+    if (!position) {
+      console.warn(`[PaperTradingEngine] Cannot close order for ${symbol}: no position found`);
+      return null;
+    }
+
+    const side: OrderSide = position.side === 'long' ? 'sell' : 'buy';
 
     const order = this.orderRepo.createOrder({
       order_id: generateId('ord'),
@@ -247,6 +255,19 @@ export class PaperTradingEngine {
     const orderId = generateId('ord');
     const fillPrice = params.type === 'market' ? currentPrice : (params.price ?? currentPrice);
 
+    // Validate margin for non-reduce-only orders
+    if (!params.reduceOnly) {
+      const requiredMargin = params.size * fillPrice;
+      const accountState = this.getAccountState();
+
+      if (requiredMargin > accountState.freeMargin) {
+        throw new Error(
+          `Insufficient margin: required ${requiredMargin.toFixed(2)} USDT, ` +
+          `available ${accountState.freeMargin.toFixed(2)} USDT`
+        );
+      }
+    }
+
     // Create order record
     const dbOrder = this.orderRepo.createOrder({
       order_id: orderId,
@@ -280,55 +301,59 @@ export class PaperTradingEngine {
   }
 
   private updatePositionFromOrder(params: OrderParams, fillPrice: number): void {
-    const existingPosition = this.positionRepo.getPosition(params.symbol);
-    const isOpeningTrade = params.side === 'buy' ? 'long' : 'short';
+    // Wrap in transaction to prevent race conditions
+    this.db.transaction(() => {
+      const existingPosition = this.positionRepo.getPosition(params.symbol);
+      const isOpeningTrade = params.side === 'buy' ? 'long' : 'short';
 
-    if (params.reduceOnly && existingPosition) {
-      // Closing or reducing position
-      this.closePositionInternal(params.symbol, fillPrice);
-      return;
-    }
-
-    if (existingPosition) {
-      // Check if same direction (adding to position) or opposite (closing)
-      if (existingPosition.side === isOpeningTrade) {
-        // Add to existing position
-        const newSize = existingPosition.size + params.size;
-        const newEntryPrice = (existingPosition.entry_price * existingPosition.size + fillPrice * params.size) / newSize;
-        this.positionRepo.updatePosition(params.symbol, {
-          size: newSize,
-          entry_price: newEntryPrice,
-          stop_loss: params.stopLoss,
-          take_profit: params.takeProfit
-        });
-      } else {
-        // Opposite direction - close position first
+      if (params.reduceOnly && existingPosition) {
+        // Closing or reducing position
         this.closePositionInternal(params.symbol, fillPrice);
+        return;
+      }
 
-        // If new size is larger, open remainder in new direction
-        if (params.size > existingPosition.size) {
-          const remainingSize = params.size - existingPosition.size;
-          this.positionRepo.createPosition({
-            symbol: params.symbol,
-            side: isOpeningTrade,
-            size: remainingSize,
-            entry_price: fillPrice,
+      if (existingPosition) {
+        // Check if same direction (adding to position) or opposite (closing)
+        if (existingPosition.side === isOpeningTrade) {
+          // Add to existing position
+          const newSize = existingPosition.size + params.size;
+          const newEntryPrice = (existingPosition.entry_price * existingPosition.size + fillPrice * params.size) / newSize;
+          this.positionRepo.updatePosition(params.symbol, {
+            size: newSize,
+            entry_price: newEntryPrice,
             stop_loss: params.stopLoss,
             take_profit: params.takeProfit
           });
+        } else {
+          // Opposite direction - close position first
+          const existingSize = existingPosition.size;
+          this.closePositionInternal(params.symbol, fillPrice);
+
+          // If new size is larger, open remainder in new direction
+          if (params.size > existingSize) {
+            const remainingSize = params.size - existingSize;
+            this.positionRepo.createPosition({
+              symbol: params.symbol,
+              side: isOpeningTrade,
+              size: remainingSize,
+              entry_price: fillPrice,
+              stop_loss: params.stopLoss,
+              take_profit: params.takeProfit
+            });
+          }
         }
+      } else {
+        // Open new position
+        this.positionRepo.createPosition({
+          symbol: params.symbol,
+          side: isOpeningTrade,
+          size: params.size,
+          entry_price: fillPrice,
+          stop_loss: params.stopLoss,
+          take_profit: params.takeProfit
+        });
       }
-    } else {
-      // Open new position
-      this.positionRepo.createPosition({
-        symbol: params.symbol,
-        side: isOpeningTrade,
-        size: params.size,
-        entry_price: fillPrice,
-        stop_loss: params.stopLoss,
-        take_profit: params.takeProfit
-      });
-    }
+    });
   }
 
   private closePositionInternal(symbol: string, exitPrice: number): void {
@@ -393,12 +418,17 @@ export class PaperTradingEngine {
   // ============================================================================
 
   openTrade(decision: TradeDecisionInput, fillPrice: number, orderId: string): string {
+    // Validate direction - neutral should not open a trade
+    if (decision.direction === 'neutral') {
+      throw new Error('Cannot open trade with neutral direction');
+    }
+
     const tradeId = generateId('trd');
 
     this.tradeRepo.createTrade({
       trade_id: tradeId,
       symbol: decision.symbol,
-      direction: decision.direction === 'long' ? 'long' : 'short',
+      direction: decision.direction,
       size: decision.size,
       entry_price: fillPrice,
       entry_time: new Date().toISOString(),

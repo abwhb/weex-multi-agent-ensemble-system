@@ -71,6 +71,20 @@ export class TradeRepository {
   }
 
   createTrade(input: CreateTradeInput): DbTrade {
+    // Input validation
+    if (!input.trade_id || input.trade_id.trim() === '') {
+      throw new Error('Trade ID is required');
+    }
+    if (!input.symbol || input.symbol.trim() === '') {
+      throw new Error('Trade symbol is required');
+    }
+    if (input.size <= 0) {
+      throw new Error('Trade size must be positive');
+    }
+    if (input.entry_price <= 0) {
+      throw new Error('Entry price must be positive');
+    }
+
     this.db.run(
       `INSERT INTO trades (
         trade_id, symbol, direction, size, entry_price, entry_time,
@@ -94,7 +108,11 @@ export class TradeRepository {
       ]
     );
 
-    return this.getTradeById(input.trade_id)!;
+    const trade = this.getTradeById(input.trade_id);
+    if (!trade) {
+      throw new Error(`Failed to create trade ${input.trade_id}`);
+    }
+    return trade;
   }
 
   getTradeById(tradeId: string): DbTrade | undefined {
@@ -109,7 +127,8 @@ export class TradeRepository {
     const pnl = (exitPrice - trade.entry_price) * direction * trade.size;
     const pnlPercent = ((exitPrice - trade.entry_price) / trade.entry_price) * direction * 100;
 
-    this.db.run(
+    // Use runAndSave for critical financial operations
+    this.db.runAndSave(
       `UPDATE trades
        SET exit_price = ?, exit_time = ?, pnl = ?, pnl_percent = ?,
            status = 'closed', updated_at = datetime('now')

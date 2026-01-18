@@ -34,7 +34,11 @@ export class AccountRepository {
       [initialBalance, initialBalance, initialBalance]
     );
 
-    return this.getAccount()!;
+    const account = this.getAccount();
+    if (!account) {
+      throw new Error('Failed to initialize account');
+    }
+    return account;
   }
 
   updateBalance(currentBalance: number): void {
@@ -52,7 +56,8 @@ export class AccountRepository {
   }
 
   recordRealizedPnl(pnl: number): void {
-    this.db.run(
+    // Use runAndSave for critical financial operations
+    this.db.runAndSave(
       `UPDATE accounts
        SET realized_pnl = realized_pnl + ?,
            current_balance = current_balance + ?,

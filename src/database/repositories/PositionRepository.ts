@@ -33,6 +33,20 @@ export class PositionRepository {
   }
 
   createPosition(input: CreatePositionInput): DbPosition {
+    // Input validation
+    if (!input.symbol || input.symbol.trim() === '') {
+      throw new Error('Position symbol is required');
+    }
+    if (input.size <= 0) {
+      throw new Error('Position size must be positive');
+    }
+    if (input.entry_price <= 0) {
+      throw new Error('Entry price must be positive');
+    }
+    if (input.leverage !== undefined && input.leverage < 1) {
+      throw new Error('Leverage must be at least 1');
+    }
+
     this.db.run(
       `INSERT INTO positions (symbol, side, size, entry_price, leverage, stop_loss, take_profit)
        VALUES (?, ?, ?, ?, ?, ?, ?)`,
@@ -47,7 +61,11 @@ export class PositionRepository {
       ]
     );
 
-    return this.getPosition(input.symbol)!;
+    const position = this.getPosition(input.symbol);
+    if (!position) {
+      throw new Error(`Failed to create position for ${input.symbol}`);
+    }
+    return position;
   }
 
   getPosition(symbol: string): DbPosition | undefined {

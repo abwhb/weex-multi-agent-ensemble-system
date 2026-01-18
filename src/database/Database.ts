@@ -240,8 +240,19 @@ export class AppDatabase {
     const changes = this.db.getRowsModified();
     const lastIdResult = this.db.exec('SELECT last_insert_rowid()');
     const lastInsertRowid = lastIdResult.length > 0 ? (lastIdResult[0].values[0][0] as number) : 0;
-    this.save(); // Auto-save after writes
+    // Note: save() is NOT called automatically to avoid performance issues
+    // Call save() explicitly or use transaction() which auto-saves on commit
     return { changes, lastInsertRowid };
+  }
+
+  /**
+   * Execute a write operation and immediately save to disk.
+   * Use this for critical operations where data loss is unacceptable.
+   */
+  runAndSave(sql: string, params: unknown[] = []): { changes: number; lastInsertRowid: number } {
+    const result = this.run(sql, params);
+    this.save();
+    return result;
   }
 
   transaction<T>(fn: () => T): T {
