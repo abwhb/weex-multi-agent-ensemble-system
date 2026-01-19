@@ -102,6 +102,25 @@ export const config = {
       modelPath: 'models/volatility/',
       /** Volatility expansion threshold. */
       volExpansionThreshold: 1.5
+    },
+    /** GeminiAgent settings. */
+    gemini: {
+      /** Gemini API key (from environment). */
+      apiKey: process.env.GEMINI_API_KEY || '',
+      /** Gemini model to use. */
+      model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+      /** Temperature for AI responses (0-2, lower = more deterministic). */
+      temperature: parseFloat(process.env.GEMINI_TEMPERATURE || '0.3'),
+      /** Maximum tokens in response. */
+      maxTokens: parseInt(process.env.GEMINI_MAX_TOKENS || '1024'),
+      /** Number of candles to analyze. */
+      candleWindow: 50,
+      /** Confidence threshold. */
+      threshold: 0.6,
+      /** Lookback period. */
+      lookback: 100,
+      /** Model path (not used for Gemini but required by AgentConfig). */
+      modelPath: ''
     }
   },
 
