@@ -50,6 +50,7 @@ export interface ExecutionResult {
  */
 export interface OrderStatus {
   orderId: string;
+  symbol: AllowedPair;
   status: 'pending' | 'placed' | 'partial' | 'filled' | 'cancelled' | 'failed';
   filledSize: number;
   avgFillPrice?: number;
@@ -307,6 +308,7 @@ export class OrderManager {
   private trackOrder(order: Order): void {
     this.activeOrders.set(order.id, {
       orderId: order.id,
+      symbol: order.symbol as AllowedPair,
       status: 'placed',
       filledSize: 0,
       lastUpdated: Date.now(),
@@ -316,29 +318,30 @@ export class OrderManager {
 
   /**
    * Monitor order until filled, cancelled, or timeout.
-   * 
+   *
    * @param orderId - Order ID to monitor
    * @returns Final order status
    */
   async monitorFills(orderId: string): Promise<OrderStatus> {
     const startTime = Date.now();
     let status = this.activeOrders.get(orderId);
-    
+
     if (!status) {
       return {
         orderId,
+        symbol: 'BTC' as AllowedPair, // Default fallback
         status: 'failed',
         filledSize: 0,
         lastUpdated: Date.now(),
         retryCount: 0
       };
     }
-    
+
     while (Date.now() - startTime < this.orderTimeout) {
       try {
         // Poll order status from exchange
-        const order = await this.client.getOrder(orderId);
-        
+        const order = await this.client.getOrder(orderId, status.symbol);
+
         if (order) {
           // Update status based on exchange response
           // PLACEHOLDER: Actual status parsing from exchange response
@@ -349,9 +352,9 @@ export class OrderManager {
             avgFillPrice: order.price || 0,
             lastUpdated: Date.now()
           };
-          
+
           this.activeOrders.set(orderId, status);
-          
+
           if (status.status === 'filled' || status.status === 'cancelled') {
             break;
           }
@@ -366,22 +369,22 @@ export class OrderManager {
           this.activeOrders.set(orderId, status);
           break;
         }
-        
+
         await this.sleep(this.pollInterval);
-        
+
       } catch (error) {
         console.error('Error polling order status:', error);
         await this.sleep(this.pollInterval);
       }
     }
-    
+
     // Timeout reached
     if (status.status === 'placed' || status.status === 'partial') {
       console.warn(`Order ${orderId} timed out, attempting cancel`);
-      await this.client.cancelOrder(orderId);
+      await this.client.cancelOrder(orderId, status.symbol);
       status.status = 'cancelled';
     }
-    
+
     return status;
   }
 

@@ -72,6 +72,7 @@ import { PerformanceTracker } from './meta-learner/PerformanceTracker';
 import { WeexClient } from './execution/WeexClient';
 import { RiskManager } from './execution/RiskManager';
 import { OrderManager } from './execution/OrderManager';
+import { PaperTradingEngine } from './execution/PaperTradingEngine';
 
 // Data
 import { MarketDataService } from './data/MarketDataService';
@@ -79,6 +80,12 @@ import { FeatureStore } from './data/FeatureStore';
 
 // Logging
 import { AILogger } from './logging/AILogger';
+
+// Database
+import { AppDatabase } from './database';
+
+// Control
+import { TradingController } from './control';
 
 // Types
 import { AllowedPair, MarketData } from './types';
@@ -93,6 +100,15 @@ import { AllowedPair, MarketData } from './types';
  * Coordinates all components and runs the main trading loop.
  */
 class TradingSystem {
+  // Database
+  private db: AppDatabase;
+
+  // Control
+  private tradingController: TradingController;
+
+  // Paper Trading
+  private paperEngine: PaperTradingEngine;
+
   // Components
   private weexClient: WeexClient;
   private riskManager: RiskManager;
@@ -102,12 +118,12 @@ class TradingSystem {
   private featureStore: FeatureStore;
   private ensemble: Ensemble;
   private performanceTracker: PerformanceTracker;
-  
+
   // Agents
   private momentumAgent: MomentumAgent;
   private meanReversionAgent: MeanReversionAgent;
   private volatilityAgent: VolatilityAgent;
-  
+
   // State
   private isRunning: boolean = false;
   private loopInterval: NodeJS.Timeout | null = null;
@@ -115,9 +131,44 @@ class TradingSystem {
   constructor() {
     console.log('Initializing WEEX Multi-Agent Trading System...');
     console.log('Configuration:', getConfigSummary());
-    
-    // Initialize execution components
-    this.weexClient = new WeexClient();
+
+    // Initialize database (async initialization happens in initialize())
+    this.db = new AppDatabase({
+      path: config.database.path,
+      runMigrations: config.database.runMigrations
+    });
+
+    // Placeholder initializations - real initialization happens in initialize()
+    this.tradingController = null as any;
+    this.paperEngine = null as any;
+    this.weexClient = null as any;
+    this.riskManager = null as any;
+    this.aiLogger = null as any;
+    this.orderManager = null as any;
+    this.dataService = null as any;
+    this.featureStore = null as any;
+    this.momentumAgent = null as any;
+    this.meanReversionAgent = null as any;
+    this.volatilityAgent = null as any;
+    this.ensemble = null as any;
+    this.performanceTracker = null as any;
+  }
+
+  private async initializeComponents(): Promise<void> {
+    // Initialize database asynchronously
+    await this.db.initializeAsync();
+    console.log(`Database initialized at ${config.database.path}`);
+
+    // Initialize trading controller (trading disabled by default)
+    this.tradingController = new TradingController(this.db);
+    console.log(`Trading mode: ${this.tradingController.getMode()} (trading ${this.tradingController.isEnabled() ? 'ENABLED' : 'DISABLED'})`);
+
+    // Initialize paper trading engine
+    this.paperEngine = new PaperTradingEngine(this.db, config.paperTrading.initialBalance);
+    console.log(`Paper trading engine initialized with ${config.paperTrading.initialBalance} USDT`);
+
+    // Initialize execution components with trading controller and paper engine
+    this.weexClient = new WeexClient(this.tradingController, this.paperEngine);
     this.riskManager = new RiskManager({
       maxLeverage: config.trading.maxLeverage,
       maxPositionSize: config.trading.maxPositionSize,
@@ -129,11 +180,11 @@ class TradingSystem {
       this.riskManager,
       this.aiLogger
     );
-    
+
     // Initialize data components
     this.dataService = new MarketDataService(this.weexClient);
     this.featureStore = new FeatureStore();
-    
+
     // Initialize agents
     this.momentumAgent = new MomentumAgent({
       lookbackPeriod: config.agents.momentum.lookback,
@@ -141,7 +192,7 @@ class TradingSystem {
       modelPath: config.agents.momentum.modelPath,
       momentumThreshold: config.agents.momentum.momentumThreshold
     });
-    
+
     this.meanReversionAgent = new MeanReversionAgent({
       lookbackPeriod: config.agents.meanReversion.lookback,
       threshold: config.agents.meanReversion.threshold,
@@ -149,7 +200,7 @@ class TradingSystem {
       defaultBBStdDev: config.agents.meanReversion.stdDev,
       minReversionProbability: config.agents.meanReversion.minReversionProb
     });
-    
+
     this.volatilityAgent = new VolatilityAgent({
       lookbackPeriod: config.agents.volatility.lookback,
       threshold: config.agents.volatility.threshold,
@@ -157,7 +208,7 @@ class TradingSystem {
       breakoutThreshold: config.agents.volatility.breakoutThreshold,
       volExpansionThreshold: config.agents.volatility.volExpansionThreshold
     });
-    
+
     // Initialize ensemble
     this.ensemble = new Ensemble({
       minConfidence: config.ensemble.minConfidence,
@@ -166,15 +217,15 @@ class TradingSystem {
       maxPositionSize: config.ensemble.maxPositionSize,
       correlationThreshold: config.ensemble.correlationThreshold
     });
-    
+
     // Register agents with ensemble
     this.ensemble.registerAgent(this.momentumAgent);
     this.ensemble.registerAgent(this.meanReversionAgent);
     this.ensemble.registerAgent(this.volatilityAgent);
-    
+
     // Initialize performance tracker
     this.performanceTracker = new PerformanceTracker();
-    
+
     console.log('Trading system components initialized');
   }
 
@@ -182,18 +233,21 @@ class TradingSystem {
    * Initialize all components and connect to WEEX.
    */
   async initialize(): Promise<void> {
-    console.log('Connecting to WEEX API...');
-    
     try {
       // Validate configuration
       validateConfig();
-      
+
+      // Initialize all components (including async database)
+      await this.initializeComponents();
+
+      console.log('Connecting to WEEX API...');
+
       // Connect to exchange
       await this.weexClient.connect();
-      
+
       // Initialize ensemble (which initializes all agents)
       await this.ensemble.initialize();
-      
+
       console.log('Trading system initialized successfully');
       console.log(`Agents registered: ${this.ensemble.getAgents().map(a => a.name).join(', ')}`);
       console.log(`Trading symbols: ${config.trading.symbols.join(', ')}`);
@@ -322,14 +376,18 @@ class TradingSystem {
    */
   async shutdown(): Promise<void> {
     console.log('Shutting down trading system...');
-    
+
     await this.stop();
-    
+
     // Shutdown components
     await this.ensemble.shutdown();
     this.dataService.shutdown();
     await this.weexClient.disconnect();
-    
+
+    // Close database
+    this.db.close();
+    console.log('Database connection closed');
+
     console.log('Trading system shutdown complete');
   }
 
@@ -339,13 +397,46 @@ class TradingSystem {
   getStatus(): Record<string, unknown> {
     return {
       isRunning: this.isRunning,
+      tradingEnabled: this.tradingController.isEnabled(),
+      tradingMode: this.tradingController.getMode(),
       tradingHalted: this.riskManager.isTradingHalted(),
       dailyStats: this.riskManager.getDailyStats(),
       ensembleMetrics: this.performanceTracker.getEnsembleMetrics(),
       agentWeights: Object.fromEntries(
         this.ensemble.getAgents().map(a => [a.name, a.weight])
-      )
+      ),
+      paperTradingPnl: this.paperEngine.getPnlSummary()
     };
+  }
+
+  /**
+   * Enable live trading (switch from paper trading).
+   * WARNING: This will send real orders to the exchange.
+   */
+  enableTrading(): void {
+    this.tradingController.enableTrading();
+  }
+
+  /**
+   * Disable live trading (switch to paper trading).
+   * This is the default safe mode.
+   */
+  disableTrading(): void {
+    this.tradingController.disableTrading();
+  }
+
+  /**
+   * Get paper trading P&L summary.
+   */
+  getPnlSummary() {
+    return this.paperEngine.getPnlSummary();
+  }
+
+  /**
+   * Get paper trading trade history.
+   */
+  getTradeHistory(options?: { symbol?: string; limit?: number }) {
+    return this.paperEngine.getTradeHistory(options);
   }
 }
 
