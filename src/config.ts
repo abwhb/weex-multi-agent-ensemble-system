@@ -173,7 +173,7 @@ export const config = {
    */
   logging: {
     /** Log level: 'debug', 'info', 'warn', 'error'. */
-    level: (process.env.LOG_LEVEL || 'info') as 'debug' | 'info' | 'warn' | 'error',
+    level: (process.env.LOG_LEVEL || 'debug') as 'debug' | 'info' | 'warn' | 'error',
     /** Path to AI decision log file. */
     aiLogPath: process.env.AI_LOG_PATH || './logs/ai_decisions.json',
     /** Path to general application log. */

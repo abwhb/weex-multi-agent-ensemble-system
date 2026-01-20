@@ -300,7 +300,7 @@ export class Ensemble {
    */
   private async collectSignals(marketData: MarketData): Promise<Map<string, AgentSignal>> {
     const signals = new Map<string, AgentSignal>();
-    
+
     const signalPromises = this.agents.map(async (agent) => {
       try {
         const signal = await agent.analyze(marketData);
@@ -312,10 +312,21 @@ export class Ensemble {
     });
 
     const results = await Promise.all(signalPromises);
-    
+
+    // Debug: Log each agent's signal
+    console.log('\n--- Agent Signals ---');
     for (const { name, signal } of results) {
       if (signal) {
         signals.set(name, signal);
+        const dirColor = signal.direction === 'long' ? '\x1b[32m' : signal.direction === 'short' ? '\x1b[31m' : '\x1b[33m';
+        const confColor = signal.confidence > 0.6 ? '\x1b[32m' : signal.confidence > 0.4 ? '\x1b[33m' : '\x1b[31m';
+        console.log(
+          `  ${name}: ${dirColor}${signal.direction.toUpperCase().padEnd(7)}\x1b[0m ` +
+          `conf: ${confColor}${(signal.confidence * 100).toFixed(1)}%\x1b[0m ` +
+          `| ${signal.reasoning.substring(0, 80)}...`
+        );
+      } else {
+        console.log(`  ${name}: \x1b[31mERROR\x1b[0m - No signal generated`);
       }
     }
 
@@ -482,21 +493,35 @@ export class Ensemble {
    * Determine if we should trade based on aggregated signals.
    */
   private shouldTrade(aggregated: AggregatedSignals): boolean {
+    const reasons: string[] = [];
+
     // Check minimum confidence
     if (aggregated.combinedConfidence < this.config.minConfidence) {
-      return false;
+      reasons.push(`confidence ${(aggregated.combinedConfidence * 100).toFixed(1)}% < ${(this.config.minConfidence * 100)}% min`);
     }
-    
+
     // Check minimum consensus
     if (aggregated.consensus < 0.5) {
-      return false; // Agents disagree too much
+      reasons.push(`consensus ${(aggregated.consensus * 100).toFixed(1)}% < 50% (agents disagree)`);
     }
-    
+
     // Check direction strength
     if (Math.abs(aggregated.weightedDirection) < 0.3) {
-      return false; // Direction not clear enough
+      reasons.push(`direction strength ${Math.abs(aggregated.weightedDirection).toFixed(2)} < 0.3 (unclear)`);
     }
-    
+
+    // Debug: Log ensemble decision
+    console.log('\n--- Ensemble Decision ---');
+    console.log(`  Weighted Direction: ${aggregated.weightedDirection > 0 ? '\x1b[32m' : aggregated.weightedDirection < 0 ? '\x1b[31m' : '\x1b[33m'}${aggregated.weightedDirection.toFixed(3)}\x1b[0m`);
+    console.log(`  Combined Confidence: ${aggregated.combinedConfidence > 0.55 ? '\x1b[32m' : '\x1b[33m'}${(aggregated.combinedConfidence * 100).toFixed(1)}%\x1b[0m`);
+    console.log(`  Consensus: ${aggregated.consensus > 0.5 ? '\x1b[32m' : '\x1b[31m'}${(aggregated.consensus * 100).toFixed(1)}%\x1b[0m`);
+
+    if (reasons.length > 0) {
+      console.log(`  \x1b[33mNO TRADE:\x1b[0m ${reasons.join(', ')}`);
+      return false;
+    }
+
+    console.log(`  \x1b[32mTRADE SIGNAL!\x1b[0m All conditions met`);
     return true;
   }
 

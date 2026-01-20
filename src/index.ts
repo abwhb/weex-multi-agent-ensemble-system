@@ -361,14 +361,21 @@ class TradingSystem {
         config.agents.momentum.lookback
       );
 
+      // Debug: Show current market state
+      const currentCandle = marketData.ohlcv[marketData.ohlcv.length - 1];
+      const prevCandle = marketData.ohlcv[marketData.ohlcv.length - 2];
+      const priceChange = ((currentCandle.close - prevCandle.close) / prevCandle.close) * 100;
+      const priceColor = priceChange >= 0 ? '\x1b[32m' : '\x1b[31m';
+
+      console.log(`\n${'='.repeat(60)}`);
+      console.log(`\x1b[36m${symbol}/USDT\x1b[0m @ \x1b[1m$${currentCandle.close.toFixed(2)}\x1b[0m ${priceColor}${priceChange >= 0 ? '+' : ''}${priceChange.toFixed(2)}%\x1b[0m`);
+      console.log(`  High: $${currentCandle.high.toFixed(2)} | Low: $${currentCandle.low.toFixed(2)} | Vol: ${currentCandle.volume.toFixed(0)}`);
+
       // Step 2: Get decision from ensemble
       const decision = await this.ensemble.decide(marketData, symbol);
 
       if (!decision) {
         // No trade signal
-        if (config.system.debug) {
-          systemLog.debug(`${symbol}: No trade signal`);
-        }
         return;
       }
 
