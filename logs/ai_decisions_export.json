@@ -1,0 +1,25 @@
+{
+  "version": "1.0.0",
+  "exportTime": "2026-01-20T13:24:01.784Z",
+  "modelVersions": {
+    "MomentumAgent/LSTM": "1.0.0",
+    "MeanReversionAgent/RegimeClassifier": "1.0.0",
+    "MeanReversionAgent/ParamOptimizer": "1.0.0",
+    "VolatilityAgent/GARCH": "1.0.0",
+    "VolatilityAgent/CNN": "1.0.0",
+    "VolatilityAgent/DQN": "1.0.0",
+    "Ensemble/MetaLearner": "1.0.0"
+  },
+  "summary": {
+    "totalEntries": 0,
+    "entriesByType": {},
+    "entriesByAgent": {},
+    "timeRange": {
+      "start": "",
+      "end": ""
+    },
+    "avgConfidence": 0,
+    "successRate": 0
+  },
+  "entries": []
+}

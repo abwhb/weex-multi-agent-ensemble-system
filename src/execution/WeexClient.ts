@@ -79,51 +79,46 @@ interface WeexTickerData {
 
 /**
  * WEEX Contract account balance response.
- * Format from: /capi/v2/account/balance
+ * Format from: /capi/v2/account/assets (returns array directly)
  */
 interface WeexAccountData {
-  marginCoin: string;
-  locked: string;
+  coinName: string;
   available: string;
-  crossMaxAvailable: string;
-  fixedMaxAvailable: string;
-  maxTransferOut: string;
   equity: string;
-  usdtEquity: string;
-  btcEquity: string;
+  frozen: string;
+  unrealizePnl: string;
 }
 
 /**
  * WEEX Contract order response.
- * Format from: /capi/v2/order/place
+ * Format from: /capi/v2/order/placeOrder (returns directly, not wrapped)
  */
 interface WeexOrderResponse {
-  orderId: string;
-  clientOid: string;
+  order_id: string;
+  client_oid: string;
 }
 
 /**
  * WEEX Contract order detail.
  * Format from: /capi/v2/order/current and /capi/v2/order/history
+ * Note: API uses snake_case field names
  */
 interface WeexOrderDetail {
   symbol: string;
-  orderId: string;
-  clientOid: string;
+  order_id: string;
+  client_oid: string;
   price: string;
   size: string;
-  orderType: string;
-  side: string;
-  posSide: string;
-  marginCoin: string;
-  marginMode: string;
-  state: string;
-  filledQty: string;
-  filledAmount: string;
-  priceAvg: string;
+  type: string;        // 1=open_long, 2=open_short, 3=close_long, 4=close_short
+  order_type: string;  // 0=normal, 1=post_only, 2=fok, 3=ioc
+  match_price: string; // 0=limit, 1=market
+  status: string;
+  filled_qty: string;
+  filled_amount: string;
+  price_avg: string;
   leverage: string;
-  cTime: string;
-  uTime: string;
+  fee: string;
+  createTime: string;
 }
 
 // ============================================================================
@@ -349,6 +344,7 @@ export class WeexClient {
 
   /**
    * Make an authenticated request to WEEX API.
+   * Note: Contract API returns data directly for most endpoints (not wrapped).
    */
   private async authenticatedRequest<T>(
     method: 'GET' | 'POST' | 'DELETE',
@@ -377,18 +373,29 @@ export class WeexClient {
 
     const url = queryString ? `${path}?${queryString}` : path;
 
-    const response = await this.client.request<WeexApiResponse<T>>({
+    const response = await this.client.request<T | WeexApiResponse<T>>({
       method,
       url,
       headers,
       data: body
     });
 
-    if (response.data.code !== '00000') {
-      throw new Error(`WEEX API Error: ${response.data.code} - ${response.data.msg}`);
+    // Handle both response formats:
+    // 1. Direct data (most contract endpoints)
+    // 2. Wrapped format {code, msg, data} (some endpoints)
+    const data = response.data as any;
+
+    // Check if response has error code
+    if (data.code && data.code !== '00000' && data.code !== '200') {
+      throw new Error(`WEEX API Error: ${data.code} - ${data.msg}`);
     }
 
-    return response.data.data;
+    // If wrapped format, return data property; otherwise return directly
+    if (data.data !== undefined) {
+      return data.data as T;
+    }
+
+    return response.data as T;
   }
 
   /**
@@ -437,7 +444,8 @@ export class WeexClient {
       const period = interval;
 
       try {
-        const response = await this.client!.get<WeexApiResponse<WeexCandleData[]>>(
+        // Candles endpoint may return data directly or wrapped
+        const response = await this.client!.get<WeexCandleData[] | WeexApiResponse<WeexCandleData[]>>(
           '/capi/v2/market/candles',
           {
             params: {
@@ -448,13 +456,23 @@ export class WeexClient {
           }
         );
 
-        if (response.data.code !== '00000') {
-          throw new Error(`WEEX API Error: ${response.data.code} - ${response.data.msg}`);
+        // Handle both response formats
+        let candleData: WeexCandleData[];
+        const respData = response.data as any;
+        if (respData.code !== undefined) {
+          // Wrapped format
+          if (respData.code !== '00000') {
+            throw new Error(`WEEX API Error: ${respData.code} - ${respData.msg}`);
+          }
+          candleData = respData.data;
+        } else {
+          // Direct array format
+          candleData = respData;
         }
 
         // Convert WEEX format to our OHLCV format
         // WEEX returns: [timestamp, open, high, low, close, volume, turnover]
-        const candles: OHLCV[] = response.data.data.map((candle: WeexCandleData) => ({
+        const candles: OHLCV[] = candleData.map((candle: WeexCandleData) => ({
           timestamp: candle[0],
           open: parseFloat(candle[1]),
           high: parseFloat(candle[2]),
@@ -477,6 +495,7 @@ export class WeexClient {
 
   /**
    * Get current ticker information.
+   * Note: Ticker endpoint returns data directly (not wrapped).
    */
   async getTicker(symbol: AllowedPair): Promise<Ticker> {
     this.ensureConnected();
@@ -486,18 +505,15 @@ export class WeexClient {
       const weexSymbol = this.toWeexSymbol(symbol);
 
       try {
-        const response = await this.client!.get<WeexApiResponse<WeexTickerData>>(
+        // Ticker returns data directly, not wrapped
+        const response = await this.client!.get<WeexTickerData>(
           '/capi/v2/market/ticker',
           {
             params: { symbol: weexSymbol }
           }
         );
 
-        if (response.data.code !== '00000') {
-          throw new Error(`WEEX API Error: ${response.data.code} - ${response.data.msg}`);
-        }
-
-        const data = response.data.data;
+        const data = response.data;
 
         return {
           symbol: `${symbol}USDT`,
@@ -542,30 +558,39 @@ export class WeexClient {
       const weexSymbol = this.toWeexSymbol(params.symbol);
       const clientOid = params.clientOrderId || `${Date.now()}${Math.random().toString(36).substr(2, 9)}`;
 
+      // Determine order type code:
+      // 1 = Open long, 2 = Open short, 3 = Close long, 4 = Close short
+      let typeCode = '1'; // Default: open long
+      if (params.reduceOnly) {
+        // Closing position
+        typeCode = params.side === 'buy' ? '4' : '3'; // buy closes short, sell closes long
+      } else {
+        // Opening position
+        typeCode = params.side === 'buy' ? '1' : '2'; // buy opens long, sell opens short
+      }
+
       // Build order request body for Contract API
       const orderBody: Record<string, unknown> = {
         symbol: weexSymbol,
-        marginCoin: 'USDT',
-        side: params.side === 'buy' ? 'open_long' : 'open_short',
-        orderType: params.type,
+        client_oid: clientOid,
         size: params.size.toString(),
-        clientOid: clientOid,
-        marginMode: 'crossed' // Use cross margin mode
+        type: typeCode,
+        order_type: '0',  // 0 = Normal
+        match_price: params.type === 'market' ? '1' : '0', // 1 = Market, 0 = Limit
+        marginMode: '1'   // 1 = Cross margin
       };
-
-      // Add leverage if specified
-      if (params.leverage) {
-        orderBody.leverage = params.leverage.toString();
-      }
 
       // Add price for limit orders
       if (params.type === 'limit' && params.price) {
         orderBody.price = params.price.toString();
       }
 
-      // Handle reduce-only orders (closing positions)
-      if (params.reduceOnly) {
-        orderBody.side = params.side === 'buy' ? 'close_short' : 'close_long';
+      // Add stop loss and take profit if specified
+      if (params.stopLoss) {
+        orderBody.presetStopLossPrice = params.stopLoss.toString();
+      }
+      if (params.takeProfit) {
+        orderBody.presetTakeProfitPrice = params.takeProfit.toString();
       }
 
       try {
@@ -573,13 +598,13 @@ export class WeexClient {
 
         const data = await this.authenticatedRequest<WeexOrderResponse>(
           'POST',
-          '/capi/v2/order/place',
+          '/capi/v2/order/placeOrder',
           undefined,
           orderBody
         );
 
         return {
-          id: data.orderId,
+          id: data.order_id || data.client_oid,
           symbol: params.symbol,
           side: params.side,
           type: params.type,
@@ -622,13 +647,12 @@ export class WeexClient {
 
         const body: Record<string, string> = {
           symbol: this.toWeexSymbol(symbol),
-          marginCoin: 'USDT',
           orderId: orderId
         };
 
         await this.authenticatedRequest<unknown>(
           'POST',
-          '/capi/v2/order/cancel',
+          '/capi/v2/order/cancel_order',
           undefined,
           body
         );
@@ -665,17 +689,19 @@ export class WeexClient {
           }
         );
 
-        // Map contract side to order side
-        const side = data.side.includes('long') ? 'buy' : 'sell';
+        // Map type code to order side: 1,3=long related, 2,4=short related
+        const typeCode = parseInt(data.type);
+        const side = (typeCode === 1 || typeCode === 3) ? 'buy' : 'sell';
+        const orderType = data.match_price === '1' ? 'market' : 'limit';
 
         return {
-          id: data.orderId,
+          id: data.order_id,
           symbol: symbol,
           side: side as OrderSide,
-          type: data.orderType as OrderType,
+          type: orderType as OrderType,
           size: parseFloat(data.size),
-          price: parseFloat(data.priceAvg) || parseFloat(data.price),
-          timestamp: parseInt(data.cTime)
+          price: parseFloat(data.price_avg) || parseFloat(data.price),
+          timestamp: parseInt(data.createTime)
         };
       } catch (error) {
         console.error(`Error fetching order ${orderId}:`, error);
@@ -709,19 +735,27 @@ export class WeexClient {
           params
         );
 
+        // Handle empty response
+        if (!data || !Array.isArray(data)) {
+          return [];
+        }
+
         return data.map(order => {
           // Extract symbol from contract format (cmt_btcusdt -> BTC)
           const rawSymbol = order.symbol.replace('cmt_', '').replace('usdt', '').toUpperCase();
-          const side = order.side.includes('long') ? 'buy' : 'sell';
+          // Map type code to order side: 1,3=long related, 2,4=short related
+          const typeCode = parseInt(order.type);
+          const side = (typeCode === 1 || typeCode === 3) ? 'buy' : 'sell';
+          const orderType = order.match_price === '1' ? 'market' : 'limit';
 
           return {
-            id: order.orderId,
+            id: order.order_id,
             symbol: (symbol || rawSymbol) as AllowedPair,
             side: side as OrderSide,
-            type: order.orderType as OrderType,
+            type: orderType as OrderType,
             size: parseFloat(order.size),
             price: parseFloat(order.price),
-            timestamp: parseInt(order.cTime)
+            timestamp: parseInt(order.createTime)
           };
         });
       } catch (error) {
@@ -753,55 +787,85 @@ export class WeexClient {
 
     return this.rateLimitedRequest(async () => {
       try {
-        const params: Record<string, string> = {
-          marginCoin: 'USDT'
-        };
-        if (symbol) {
-          params.symbol = this.toWeexSymbol(symbol);
-        }
-
         console.log(`[LIVE] Fetching positions${symbol ? ` for ${symbol}` : ''}`);
 
         interface WeexPositionData {
           symbol: string;
           marginCoin: string;
           holdSide: string;
-          openDelegateCount: string;
           margin: string;
           available: string;
           locked: string;
           total: string;
           leverage: string;
-          achievedProfits: string;
           averageOpenPrice: string;
           marginMode: string;
-          holdMode: string;
           unrealizedPL: string;
           liquidationPrice: string;
-          cTime: string;
         }
 
-        const data = await this.authenticatedRequest<WeexPositionData[]>(
-          'GET',
-          '/capi/v2/position/allPosition',
-          params
-        );
+        // If symbol specified, use single position endpoint
+        if (symbol) {
+          const params: Record<string, string> = {
+            symbol: this.toWeexSymbol(symbol)
+          };
 
-        return data
-          .filter(pos => parseFloat(pos.total) > 0)
-          .map(pos => {
-            const rawSymbol = pos.symbol.replace('cmt_', '').replace('usdt', '').toUpperCase();
-            return {
-              symbol: rawSymbol as AllowedPair,
-              side: pos.holdSide === 'long' ? 'long' : 'short',
-              size: parseFloat(pos.total),
-              entryPrice: parseFloat(pos.averageOpenPrice),
-              markPrice: 0, // Would need separate call
-              unrealizedPnl: parseFloat(pos.unrealizedPL),
-              leverage: parseInt(pos.leverage),
-              liquidationPrice: parseFloat(pos.liquidationPrice)
-            } as Position;
-          });
+          const data = await this.authenticatedRequest<WeexPositionData>(
+            'GET',
+            '/capi/v2/account/position/singlePosition',
+            params
+          );
+
+          if (!data || !data.total || parseFloat(data.total) === 0) {
+            return [];
+          }
+
+          return [{
+            symbol: symbol,
+            side: data.holdSide === 'long' ? 'long' : 'short',
+            size: parseFloat(data.total),
+            entryPrice: parseFloat(data.averageOpenPrice),
+            markPrice: 0,
+            unrealizedPnl: parseFloat(data.unrealizedPL || '0'),
+            leverage: parseInt(data.leverage || '1'),
+            liquidationPrice: parseFloat(data.liquidationPrice || '0')
+          } as Position];
+        }
+
+        // For all positions, we need to check each symbol we trade
+        const positions: Position[] = [];
+        const tradingSymbols = config.trading.symbols;
+
+        for (const sym of tradingSymbols) {
+          try {
+            const params: Record<string, string> = {
+              symbol: this.toWeexSymbol(sym as AllowedPair)
+            };
+
+            const data = await this.authenticatedRequest<WeexPositionData>(
+              'GET',
+              '/capi/v2/account/position/singlePosition',
+              params
+            );
+
+            if (data && data.total && parseFloat(data.total) > 0) {
+              positions.push({
+                symbol: sym as AllowedPair,
+                side: data.holdSide === 'long' ? 'long' : 'short',
+                size: parseFloat(data.total),
+                entryPrice: parseFloat(data.averageOpenPrice),
+                markPrice: 0,
+                unrealizedPnl: parseFloat(data.unrealizedPL || '0'),
+                leverage: parseInt(data.leverage || '1'),
+                liquidationPrice: parseFloat(data.liquidationPrice || '0')
+              } as Position);
+            }
+          } catch {
+            // No position for this symbol, continue
+          }
+        }
+
+        return positions;
       } catch (error) {
         console.error('Error fetching positions:', error);
         return [];
@@ -854,16 +918,13 @@ export class WeexClient {
       try {
         const data = await this.authenticatedRequest<WeexAccountData[]>(
           'GET',
-          '/capi/v2/account/balance',
-          {
-            marginCoin: 'USDT'
-          }
+          '/capi/v2/account/assets'
         );
 
         return data.map(account => ({
-          currency: account.marginCoin.toUpperCase(),
+          currency: account.coinName.toUpperCase(),
           available: parseFloat(account.available),
-          frozen: parseFloat(account.locked),
+          frozen: parseFloat(account.frozen),
           total: parseFloat(account.equity)
         }));
       } catch (error) {
@@ -905,13 +966,13 @@ export class WeexClient {
 
         await this.authenticatedRequest<unknown>(
           'POST',
-          '/capi/v2/account/setLeverage',
+          '/capi/v2/account/leverage',
           undefined,
           {
             symbol: weexSymbol,
-            marginCoin: 'USDT',
-            leverage: leverage.toString(),
-            holdSide: holdSide === 'both' ? undefined : holdSide
+            marginMode: '1', // 1 = Cross mode
+            longLeverage: leverage.toString(),
+            shortLeverage: leverage.toString()
           }
         );
 
@@ -941,7 +1002,7 @@ export class WeexClient {
     return this.rateLimitedRequest(async () => {
       try {
         const params: Record<string, string> = {
-          pageSize: limit.toString()
+          limit: limit.toString()
         };
         if (symbol) {
           params.symbol = this.toWeexSymbol(symbol);
@@ -953,18 +1014,26 @@ export class WeexClient {
           params
         );
 
+        // Handle empty response
+        if (!data || !Array.isArray(data)) {
+          return [];
+        }
+
         return data.map(order => {
           const rawSymbol = order.symbol.replace('cmt_', '').replace('usdt', '').toUpperCase();
-          const side = order.side.includes('long') ? 'buy' : 'sell';
+          // Map type code to order side
+          const typeCode = parseInt(order.type);
+          const side = (typeCode === 1 || typeCode === 3) ? 'buy' : 'sell';
+          const orderType = order.match_price === '1' ? 'market' : 'limit';
 
           return {
-            id: order.orderId,
+            id: order.order_id,
             symbol: (symbol || rawSymbol) as AllowedPair,
             side: side as OrderSide,
-            type: order.orderType as OrderType,
+            type: orderType as OrderType,
             size: parseFloat(order.size),
-            price: parseFloat(order.priceAvg) || parseFloat(order.price),
-            timestamp: parseInt(order.cTime)
+            price: parseFloat(order.price_avg) || parseFloat(order.price),
+            timestamp: parseInt(order.createTime)
           };
         });
       } catch (error) {
