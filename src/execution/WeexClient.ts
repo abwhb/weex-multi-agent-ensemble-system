@@ -236,15 +236,24 @@ export class WeexClient {
 
   /**
    * Check if we should use paper trading.
-   * Paper trading is used when:
-   * 1. TradingController exists and trading is disabled (default)
-   * 2. Or config.trading.mode is 'paper'
+   * Paper trading is used when ANY of these conditions are true:
+   * 1. config.trading.mode is 'paper' (from .env TRADING_MODE)
+   * 2. TradingController exists and trading is disabled (default)
+   *
+   * This means BOTH config AND controller must be set to live for live trading.
+   * This is a safety feature to prevent accidental live trades.
    */
   private usePaperTrading(): boolean {
+    // Always paper trade if config says paper
+    if (config.trading.mode === 'paper') {
+      return true;
+    }
+    // If controller exists, check its state
     if (this.tradingController) {
       return !this.tradingController.isEnabled();
     }
-    return config.trading.mode === 'paper';
+    // Default to paper if no controller
+    return true;
   }
 
   /**
@@ -262,24 +271,23 @@ export class WeexClient {
   /**
    * Initialize API connection with credentials.
    * Validates credentials and tests connectivity.
-   * In paper trading mode, no live API connection is required.
+   * Note: Even in paper trading mode, we need API connection for market data.
    */
   async connect(): Promise<void> {
-    // If using paper trading, no need for live API connection
-    if (this.usePaperTrading() && this.paperEngine) {
-      console.log('Paper trading mode active - using simulated exchange');
-      this.isConnected = true;
-      return;
+    const isPaperMode = this.usePaperTrading() && this.paperEngine;
+
+    if (isPaperMode) {
+      console.log('Paper trading mode active - trades will be simulated');
+    } else {
+      console.log('Live trading mode - connecting to WEEX API...');
     }
 
-    console.log('Connecting to WEEX API...');
-
-    // Validate credentials
-    if (!this.apiKey || !this.apiSecret) {
+    // Validate credentials for live trading
+    if (!isPaperMode && (!this.apiKey || !this.apiSecret)) {
       throw new Error('WEEX API credentials not configured. Set WEEX_API_KEY and WEEX_API_SECRET.');
     }
 
-    // Initialize axios instance
+    // Always initialize axios instance for market data
     this.client = axios.create({
       baseURL: this.baseUrl,
       timeout: 30000,

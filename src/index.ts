@@ -80,6 +80,7 @@ import { FeatureStore } from './data/FeatureStore';
 
 // Logging
 import { AILogger } from './logging/AILogger';
+import { Logger, systemLog, tradeLog } from './logging/Logger';
 
 // Database
 import { AppDatabase } from './database';
@@ -129,8 +130,8 @@ class TradingSystem {
   private loopInterval: NodeJS.Timeout | null = null;
 
   constructor() {
-    console.log('Initializing WEEX Multi-Agent Trading System...');
-    console.log('Configuration:', getConfigSummary());
+    systemLog.info('Initializing WEEX Multi-Agent Trading System...');
+    systemLog.debug('Configuration:', getConfigSummary());
 
     // Initialize database (async initialization happens in initialize())
     this.db = new AppDatabase({
@@ -157,15 +158,16 @@ class TradingSystem {
   private async initializeComponents(): Promise<void> {
     // Initialize database asynchronously
     await this.db.initializeAsync();
-    console.log(`Database initialized at ${config.database.path}`);
+    systemLog.info(`Database initialized at ${config.database.path}`);
 
     // Initialize trading controller (trading disabled by default)
     this.tradingController = new TradingController(this.db);
-    console.log(`Trading mode: ${this.tradingController.getMode()} (trading ${this.tradingController.isEnabled() ? 'ENABLED' : 'DISABLED'})`);
+    const tradingStatus = this.tradingController.isEnabled() ? 'ENABLED' : 'DISABLED';
+    systemLog.info(`Trading mode: ${this.tradingController.getMode()} (trading ${tradingStatus})`);
 
     // Initialize paper trading engine
     this.paperEngine = new PaperTradingEngine(this.db, config.paperTrading.initialBalance);
-    console.log(`Paper trading engine initialized with ${config.paperTrading.initialBalance} USDT`);
+    systemLog.info(`Paper trading engine initialized with ${config.paperTrading.initialBalance} USDT`);
 
     // Initialize execution components with trading controller and paper engine
     this.weexClient = new WeexClient(this.tradingController, this.paperEngine);
@@ -226,7 +228,7 @@ class TradingSystem {
     // Initialize performance tracker
     this.performanceTracker = new PerformanceTracker();
 
-    console.log('Trading system components initialized');
+    systemLog.info('Trading system components initialized');
   }
 
   /**
@@ -234,13 +236,20 @@ class TradingSystem {
    */
   async initialize(): Promise<void> {
     try {
+      systemLog.banner('WEEX Multi-Agent Trading System');
+
+      // Show paper mode warning
+      if (config.trading.mode === 'paper') {
+        tradeLog.paperMode();
+      }
+
       // Validate configuration
       validateConfig();
 
       // Initialize all components (including async database)
       await this.initializeComponents();
 
-      console.log('Connecting to WEEX API...');
+      systemLog.info('Connecting to WEEX API...');
 
       // Connect to exchange
       await this.weexClient.connect();
@@ -248,11 +257,15 @@ class TradingSystem {
       // Initialize ensemble (which initializes all agents)
       await this.ensemble.initialize();
 
-      console.log('Trading system initialized successfully');
-      console.log(`Agents registered: ${this.ensemble.getAgents().map(a => a.name).join(', ')}`);
-      console.log(`Trading symbols: ${config.trading.symbols.join(', ')}`);
+      systemLog.separator('Initialization Complete');
+      systemLog.info(`Trading mode: ${config.trading.mode.toUpperCase()}`);
+      systemLog.info(`Agents: ${this.ensemble.getAgents().map(a => a.name).join(', ')}`);
+      systemLog.info(`Symbols: ${config.trading.symbols.join(', ')}`);
+      systemLog.info(`Max leverage: ${config.trading.maxLeverage}x`);
+      systemLog.info(`Risk per trade: ${(config.trading.riskPerTrade * 100).toFixed(1)}%`);
+      systemLog.separator();
     } catch (error) {
-      console.error('Failed to initialize trading system:', error);
+      systemLog.error('Failed to initialize trading system', error);
       throw error;
     }
   }
@@ -262,23 +275,23 @@ class TradingSystem {
    */
   async start(): Promise<void> {
     if (this.isRunning) {
-      console.warn('Trading system is already running');
+      systemLog.warn('Trading system is already running');
       return;
     }
-    
-    console.log('Starting trading loop...');
+
+    systemLog.separator('Starting Trading Loop');
     this.isRunning = true;
-    
+
     // Run immediately, then on interval
     await this.runTradingCycle();
-    
+
     this.loopInterval = setInterval(async () => {
       if (this.isRunning) {
         await this.runTradingCycle();
       }
     }, config.system.loopInterval);
-    
-    console.log(`Trading loop started (interval: ${config.system.loopInterval}ms)`);
+
+    systemLog.info(`Trading loop started (interval: ${config.system.loopInterval / 1000}s)`);
   }
 
   /**
@@ -286,25 +299,25 @@ class TradingSystem {
    */
   private async runTradingCycle(): Promise<void> {
     const cycleStart = Date.now();
-    
+
     try {
       // Check if trading is halted
       if (this.riskManager.isTradingHalted()) {
-        console.log('Trading halted by risk manager');
+        systemLog.warn('Trading halted by risk manager');
         return;
       }
-      
+
       // Process each symbol
       for (const symbol of config.trading.symbols) {
         await this.processSymbol(symbol as AllowedPair);
       }
-      
+
       const cycleDuration = Date.now() - cycleStart;
       if (config.system.debug) {
-        console.log(`Trading cycle completed in ${cycleDuration}ms`);
+        systemLog.debug(`Trading cycle completed in ${cycleDuration}ms`);
       }
     } catch (error) {
-      console.error('Error in trading cycle:', error);
+      systemLog.error('Error in trading cycle', error);
     }
   }
 
@@ -319,33 +332,40 @@ class TradingSystem {
         config.trading.defaultTimeframe,
         config.agents.momentum.lookback
       );
-      
+
       // Step 2: Get decision from ensemble
       const decision = await this.ensemble.decide(marketData, symbol);
-      
+
       if (!decision) {
         // No trade signal
         if (config.system.debug) {
-          console.log(`${symbol}: No trade signal`);
+          systemLog.debug(`${symbol}: No trade signal`);
         }
         return;
       }
-      
-      console.log(`${symbol}: ${decision.action.toUpperCase()} signal (confidence: ${(decision.confidence * 100).toFixed(1)}%)`);
-      
+
+      // Log the trade signal
+      const action = decision.action === 'buy' ? 'BUY' : decision.action === 'sell' ? 'SELL' : 'HOLD';
+      tradeLog.trade(action, symbol, {
+        price: decision.currentPrice,
+        size: decision.size,
+        confidence: decision.confidence,
+        reason: decision.reasoning
+      });
+
       // Step 3: Execute decision
       const result = await this.orderManager.executeDecision(decision);
-      
+
       if (result.success && result.order) {
-        console.log(`${symbol}: Order placed - ${result.order.id}`);
-        
+        tradeLog.info(`Order placed`, { orderId: result.order.id, symbol });
+
         // Record trade for performance tracking
         this.performanceTracker.recordTradeEntry(decision, result.fillPrice || decision.currentPrice);
       } else {
-        console.log(`${symbol}: Order failed - ${result.error}`);
+        tradeLog.warn(`Order failed: ${result.error}`, { symbol });
       }
     } catch (error) {
-      console.error(`Error processing ${symbol}:`, error);
+      systemLog.error(`Error processing ${symbol}`, error);
     }
   }
 
@@ -353,29 +373,30 @@ class TradingSystem {
    * Stop the trading loop.
    */
   async stop(): Promise<void> {
-    console.log('Stopping trading system...');
-    
+    systemLog.info('Stopping trading system...');
+
     this.isRunning = false;
-    
+
     if (this.loopInterval) {
       clearInterval(this.loopInterval);
       this.loopInterval = null;
     }
-    
+
     // Flush logs
     this.aiLogger.flush();
-    
+
     // Export final logs
     await this.aiLogger.exportLog();
-    
-    console.log('Trading system stopped');
+
+    systemLog.info('Trading system stopped');
   }
 
   /**
    * Gracefully shutdown all components.
    */
   async shutdown(): Promise<void> {
-    console.log('Shutting down trading system...');
+    systemLog.separator('Shutting Down');
+    systemLog.info('Shutting down trading system...');
 
     await this.stop();
 
@@ -386,9 +407,9 @@ class TradingSystem {
 
     // Close database
     this.db.close();
-    console.log('Database connection closed');
+    systemLog.info('Database connection closed');
 
-    console.log('Trading system shutdown complete');
+    systemLog.info('Trading system shutdown complete');
   }
 
   /**
@@ -448,37 +469,36 @@ class TradingSystem {
  * Main function - entry point for the application.
  */
 async function main(): Promise<void> {
-  console.log('='.repeat(60));
-  console.log('WEEX Multi-Agent Alpha Trading System');
-  console.log('AI Wars Hackathon Submission');
-  console.log('='.repeat(60));
-  
+  systemLog.banner('WEEX Multi-Agent Alpha Trading System');
+  systemLog.info('AI Wars Hackathon Submission');
+  systemLog.separator();
+
   const system = new TradingSystem();
-  
+
   // Handle graceful shutdown
   process.on('SIGINT', async () => {
-    console.log('\nReceived SIGINT, shutting down...');
+    systemLog.warn('\nReceived SIGINT, shutting down...');
     await system.shutdown();
     process.exit(0);
   });
-  
+
   process.on('SIGTERM', async () => {
-    console.log('\nReceived SIGTERM, shutting down...');
+    systemLog.warn('\nReceived SIGTERM, shutting down...');
     await system.shutdown();
     process.exit(0);
   });
-  
+
   try {
     // Initialize and start
     await system.initialize();
     await system.start();
-    
-    console.log('\nTrading system is running. Press Ctrl+C to stop.');
-    
+
+    systemLog.info('Trading system is running. Press Ctrl+C to stop.');
+
     // Keep the process running
     process.stdin.resume();
   } catch (error) {
-    console.error('Fatal error:', error);
+    systemLog.error('Fatal error', error);
     await system.shutdown();
     process.exit(1);
   }
