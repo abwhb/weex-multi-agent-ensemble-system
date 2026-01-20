@@ -10,14 +10,16 @@
  *
  * ## API Reference
  *
- * @see https://www.weex.com/api-doc/spot/introduction/APIBriefIntroduction
+ * @see https://www.weex.com/api-doc/contract/introduction/APIBriefIntroduction
+ * @see https://www.weex.com/api-doc/ai/QuickStart/RequestInteraction
  *
- * ## Competition Requirements
+ * ## Competition Requirements (AI Wars Hackathon)
  *
- * - All trades must use WEEX OpenAPI
+ * - All trades must use WEEX Contract/Futures API
  * - Maximum leverage: 20x
  * - Allowed pairs: ADA, SOL, LTC, DOGE, BTC, ETH, XRP, BNB
- * - Minimum 10 trades required
+ * - Minimum 10 USDT trading required for API test
+ * - Test account balance: 1000 USDT
  */
 
 import axios, { AxiosInstance, AxiosError } from 'axios';
@@ -57,63 +59,71 @@ interface WeexApiResponse<T> {
 type WeexCandleData = [number, string, string, string, string, string, string];
 
 /**
- * WEEX ticker response.
+ * WEEX Contract ticker response.
+ * Format from: /capi/v2/market/ticker
  */
 interface WeexTickerData {
   symbol: string;
-  high24h: string;
-  low24h: string;
-  close: string;
-  quoteVol: string;
-  baseVol: string;
-  usdtVol: string;
-  ts: string;
-  buyOne: string;
-  sellOne: string;
-  bidSz: string;
-  askSz: string;
-  openUtc0: string;
-  changeUtc: string;
-  change: string;
+  last: string;
+  best_ask: string;
+  best_bid: string;
+  high_24h: string;
+  low_24h: string;
+  base_volume: string;
+  volume_24h: string;
+  timestamp: string;
+  priceChangePercent: string;
+  indexPrice: string;
+  markPrice: string;
 }
 
 /**
- * WEEX account asset response.
+ * WEEX Contract account balance response.
+ * Format from: /capi/v2/account/balance
  */
-interface WeexAssetData {
-  coinId: string;
-  coinName: string;
+interface WeexAccountData {
+  marginCoin: string;
+  locked: string;
   available: string;
-  frozen: string;
-  lock: string;
-  uTime: string;
+  crossMaxAvailable: string;
+  fixedMaxAvailable: string;
+  maxTransferOut: string;
+  equity: string;
+  usdtEquity: string;
+  btcEquity: string;
 }
 
 /**
- * WEEX order response.
+ * WEEX Contract order response.
+ * Format from: /capi/v2/order/place
  */
 interface WeexOrderResponse {
   orderId: string;
-  clientOrderId: string;
+  clientOid: string;
 }
 
 /**
- * WEEX order detail.
+ * WEEX Contract order detail.
+ * Format from: /capi/v2/order/current and /capi/v2/order/history
  */
 interface WeexOrderDetail {
-  accountId: string;
   symbol: string;
   orderId: string;
-  clientOrderId: string;
+  clientOid: string;
   price: string;
-  quantity: string;
+  size: string;
   orderType: string;
   side: string;
-  status: string;
-  fillPrice: string;
-  fillQuantity: string;
-  fillTotalAmount: string;
+  posSide: string;
+  marginCoin: string;
+  marginMode: string;
+  state: string;
+  filledQty: string;
+  filledAmount: string;
+  priceAvg: string;
+  leverage: string;
   cTime: string;
+  uTime: string;
 }
 
 // ============================================================================
@@ -243,10 +253,11 @@ export class WeexClient {
   }
 
   /**
-   * Convert symbol to WEEX format (e.g., 'BTC' -> 'BTCUSDT_SPBL').
+   * Convert symbol to WEEX Contract format (e.g., 'BTC' -> 'cmt_btcusdt').
+   * Contract API uses lowercase symbol with 'cmt_' prefix.
    */
   private toWeexSymbol(symbol: AllowedPair): string {
-    return `${symbol}USDT_SPBL`;
+    return `cmt_${symbol.toLowerCase()}usdt`;
   }
 
   // ==========================================================================
@@ -298,12 +309,12 @@ export class WeexClient {
     // Test connection with a public endpoint (no auth required)
     try {
       const testSymbol = this.toWeexSymbol('BTC');
-      await this.client.get(`/api/v2/market/ticker?symbol=${testSymbol}`);
+      await this.client.get(`/capi/v2/market/ticker?symbol=${testSymbol}`);
       this.isConnected = true;
-      console.log('Connected to WEEX API successfully');
+      console.log('Connected to WEEX Contract API successfully');
     } catch (error) {
-      console.error('Failed to connect to WEEX API:', error);
-      throw new Error('WEEX API connection failed');
+      console.error('Failed to connect to WEEX Contract API:', error);
+      throw new Error('WEEX Contract API connection failed');
     }
   }
 
@@ -427,11 +438,11 @@ export class WeexClient {
 
       try {
         const response = await this.client!.get<WeexApiResponse<WeexCandleData[]>>(
-          '/api/v2/market/candles',
+          '/capi/v2/market/candles',
           {
             params: {
               symbol: weexSymbol,
-              period: period,
+              granularity: period,
               limit: limit.toString()
             }
           }
@@ -476,7 +487,7 @@ export class WeexClient {
 
       try {
         const response = await this.client!.get<WeexApiResponse<WeexTickerData>>(
-          '/api/v2/market/ticker',
+          '/capi/v2/market/ticker',
           {
             params: { symbol: weexSymbol }
           }
@@ -490,11 +501,11 @@ export class WeexClient {
 
         return {
           symbol: `${symbol}USDT`,
-          lastPrice: parseFloat(data.close),
-          bidPrice: parseFloat(data.buyOne),
-          askPrice: parseFloat(data.sellOne),
-          volume24h: parseFloat(data.baseVol),
-          change24h: parseFloat(data.change)
+          lastPrice: parseFloat(data.last),
+          bidPrice: parseFloat(data.best_bid),
+          askPrice: parseFloat(data.best_ask),
+          volume24h: parseFloat(data.base_volume),
+          change24h: parseFloat(data.priceChangePercent)
         };
       } catch (error) {
         console.error(`Error fetching ticker for ${symbol}:`, error);
@@ -529,23 +540,32 @@ export class WeexClient {
 
     return this.rateLimitedRequest(async () => {
       const weexSymbol = this.toWeexSymbol(params.symbol);
-      const clientOrderId = params.clientOrderId || `${Date.now()}${Math.random().toString(36).substr(2, 9)}`;
+      const clientOid = params.clientOrderId || `${Date.now()}${Math.random().toString(36).substr(2, 9)}`;
 
-      // Build order request body
+      // Build order request body for Contract API
       const orderBody: Record<string, unknown> = {
         symbol: weexSymbol,
-        side: params.side,
+        marginCoin: 'USDT',
+        side: params.side === 'buy' ? 'open_long' : 'open_short',
         orderType: params.type,
-        force: 'normal', // GTC (Good Till Cancelled)
-        quantity: params.size.toString(),
-        clientOrderId: clientOrderId
+        size: params.size.toString(),
+        clientOid: clientOid,
+        marginMode: 'crossed' // Use cross margin mode
       };
+
+      // Add leverage if specified
+      if (params.leverage) {
+        orderBody.leverage = params.leverage.toString();
+      }
 
       // Add price for limit orders
       if (params.type === 'limit' && params.price) {
         orderBody.price = params.price.toString();
-      } else if (params.type === 'market') {
-        orderBody.price = '0'; // Market orders don't use price
+      }
+
+      // Handle reduce-only orders (closing positions)
+      if (params.reduceOnly) {
+        orderBody.side = params.side === 'buy' ? 'close_short' : 'close_long';
       }
 
       try {
@@ -553,7 +573,7 @@ export class WeexClient {
 
         const data = await this.authenticatedRequest<WeexOrderResponse>(
           'POST',
-          '/api/v2/trade/orders',
+          '/capi/v2/order/place',
           undefined,
           orderBody
         );
@@ -596,19 +616,21 @@ export class WeexClient {
       try {
         console.log(`[LIVE] Cancelling order: ${orderId}`);
 
-        const params: Record<string, string> = {
+        if (!symbol) {
+          throw new Error('Symbol is required to cancel order');
+        }
+
+        const body: Record<string, string> = {
+          symbol: this.toWeexSymbol(symbol),
+          marginCoin: 'USDT',
           orderId: orderId
         };
 
-        if (symbol) {
-          params.symbol = this.toWeexSymbol(symbol);
-        }
-
         await this.authenticatedRequest<unknown>(
           'POST',
-          '/api/v2/trade/cancel-order',
+          '/capi/v2/order/cancel',
           undefined,
-          params
+          body
         );
 
         return true;
@@ -636,20 +658,23 @@ export class WeexClient {
 
         const data = await this.authenticatedRequest<WeexOrderDetail>(
           'GET',
-          '/api/v2/trade/orderInfo',
+          '/capi/v2/order/detail',
           {
             symbol: weexSymbol,
             orderId: orderId
           }
         );
 
+        // Map contract side to order side
+        const side = data.side.includes('long') ? 'buy' : 'sell';
+
         return {
           id: data.orderId,
           symbol: symbol,
-          side: data.side as OrderSide,
+          side: side as OrderSide,
           type: data.orderType as OrderType,
-          size: parseFloat(data.quantity),
-          price: parseFloat(data.fillPrice) || parseFloat(data.price),
+          size: parseFloat(data.size),
+          price: parseFloat(data.priceAvg) || parseFloat(data.price),
           timestamp: parseInt(data.cTime)
         };
       } catch (error) {
@@ -680,19 +705,25 @@ export class WeexClient {
 
         const data = await this.authenticatedRequest<WeexOrderDetail[]>(
           'GET',
-          '/api/v2/trade/open-orders',
+          '/capi/v2/order/current',
           params
         );
 
-        return data.map(order => ({
-          id: order.orderId,
-          symbol: symbol || order.symbol.replace('USDT_SPBL', '') as AllowedPair,
-          side: order.side as OrderSide,
-          type: order.orderType as OrderType,
-          size: parseFloat(order.quantity),
-          price: parseFloat(order.price),
-          timestamp: parseInt(order.cTime)
-        }));
+        return data.map(order => {
+          // Extract symbol from contract format (cmt_btcusdt -> BTC)
+          const rawSymbol = order.symbol.replace('cmt_', '').replace('usdt', '').toUpperCase();
+          const side = order.side.includes('long') ? 'buy' : 'sell';
+
+          return {
+            id: order.orderId,
+            symbol: (symbol || rawSymbol) as AllowedPair,
+            side: side as OrderSide,
+            type: order.orderType as OrderType,
+            size: parseFloat(order.size),
+            price: parseFloat(order.price),
+            timestamp: parseInt(order.cTime)
+          };
+        });
       } catch (error) {
         console.error('Error fetching open orders:', error);
         return [];
@@ -720,11 +751,62 @@ export class WeexClient {
       return this.paperEngine.getPositions(symbol);
     }
 
-    // Note: WEEX Spot API doesn't have a positions endpoint like futures
-    // For spot trading, positions are derived from account balances
-    // This would need to be implemented differently for a futures API
-    console.log(`[LIVE] Fetching positions${symbol ? ` for ${symbol}` : ''}`);
-    return [];
+    return this.rateLimitedRequest(async () => {
+      try {
+        const params: Record<string, string> = {
+          marginCoin: 'USDT'
+        };
+        if (symbol) {
+          params.symbol = this.toWeexSymbol(symbol);
+        }
+
+        console.log(`[LIVE] Fetching positions${symbol ? ` for ${symbol}` : ''}`);
+
+        interface WeexPositionData {
+          symbol: string;
+          marginCoin: string;
+          holdSide: string;
+          openDelegateCount: string;
+          margin: string;
+          available: string;
+          locked: string;
+          total: string;
+          leverage: string;
+          achievedProfits: string;
+          averageOpenPrice: string;
+          marginMode: string;
+          holdMode: string;
+          unrealizedPL: string;
+          liquidationPrice: string;
+          cTime: string;
+        }
+
+        const data = await this.authenticatedRequest<WeexPositionData[]>(
+          'GET',
+          '/capi/v2/position/allPosition',
+          params
+        );
+
+        return data
+          .filter(pos => parseFloat(pos.total) > 0)
+          .map(pos => {
+            const rawSymbol = pos.symbol.replace('cmt_', '').replace('usdt', '').toUpperCase();
+            return {
+              symbol: rawSymbol as AllowedPair,
+              side: pos.holdSide === 'long' ? 'long' : 'short',
+              size: parseFloat(pos.total),
+              entryPrice: parseFloat(pos.averageOpenPrice),
+              markPrice: 0, // Would need separate call
+              unrealizedPnl: parseFloat(pos.unrealizedPL),
+              leverage: parseInt(pos.leverage),
+              liquidationPrice: parseFloat(pos.liquidationPrice)
+            } as Position;
+          });
+      } catch (error) {
+        console.error('Error fetching positions:', error);
+        return [];
+      }
+    });
   }
 
   /**
@@ -770,20 +852,195 @@ export class WeexClient {
 
     return this.rateLimitedRequest(async () => {
       try {
-        const data = await this.authenticatedRequest<WeexAssetData[]>(
+        const data = await this.authenticatedRequest<WeexAccountData[]>(
           'GET',
-          '/api/spot/v1/account/assets'
+          '/capi/v2/account/balance',
+          {
+            marginCoin: 'USDT'
+          }
         );
 
-        return data.map(asset => ({
-          currency: asset.coinName.toUpperCase(),
-          available: parseFloat(asset.available),
-          frozen: parseFloat(asset.frozen),
-          total: parseFloat(asset.available) + parseFloat(asset.frozen) + parseFloat(asset.lock)
+        return data.map(account => ({
+          currency: account.marginCoin.toUpperCase(),
+          available: parseFloat(account.available),
+          frozen: parseFloat(account.locked),
+          total: parseFloat(account.equity)
         }));
       } catch (error) {
         console.error('Error fetching balance:', error);
         throw error;
+      }
+    });
+  }
+
+  /**
+   * Set leverage for a symbol.
+   * Required by hackathon guide step 4.
+   *
+   * @param symbol - Trading pair symbol
+   * @param leverage - Leverage multiplier (max 20x per competition rules)
+   * @param holdSide - Position side ('long', 'short', or 'both')
+   */
+  async setLeverage(
+    symbol: AllowedPair,
+    leverage: number,
+    holdSide: 'long' | 'short' | 'both' = 'both'
+  ): Promise<boolean> {
+    this.ensureConnected();
+    this.validateSymbol(symbol);
+
+    if (leverage > 20) {
+      throw new Error('Maximum leverage is 20x per competition rules');
+    }
+
+    // Paper trading doesn't need to set leverage via API
+    if (this.usePaperTrading()) {
+      console.log(`[PAPER] Setting leverage for ${symbol} to ${leverage}x`);
+      return true;
+    }
+
+    return this.rateLimitedRequest(async () => {
+      try {
+        const weexSymbol = this.toWeexSymbol(symbol);
+
+        await this.authenticatedRequest<unknown>(
+          'POST',
+          '/capi/v2/account/setLeverage',
+          undefined,
+          {
+            symbol: weexSymbol,
+            marginCoin: 'USDT',
+            leverage: leverage.toString(),
+            holdSide: holdSide === 'both' ? undefined : holdSide
+          }
+        );
+
+        console.log(`[LIVE] Set leverage for ${symbol} to ${leverage}x`);
+        return true;
+      } catch (error) {
+        console.error(`Error setting leverage for ${symbol}:`, error);
+        return false;
+      }
+    });
+  }
+
+  /**
+   * Get order history.
+   * Required by hackathon guide step 10.
+   */
+  async getOrderHistory(symbol?: AllowedPair, limit: number = 100): Promise<Order[]> {
+    this.ensureConnected();
+    if (symbol) this.validateSymbol(symbol);
+
+    // Route to paper trading if disabled
+    if (this.usePaperTrading() && this.paperEngine) {
+      // Paper engine can return empty for now
+      return [];
+    }
+
+    return this.rateLimitedRequest(async () => {
+      try {
+        const params: Record<string, string> = {
+          pageSize: limit.toString()
+        };
+        if (symbol) {
+          params.symbol = this.toWeexSymbol(symbol);
+        }
+
+        const data = await this.authenticatedRequest<WeexOrderDetail[]>(
+          'GET',
+          '/capi/v2/order/history',
+          params
+        );
+
+        return data.map(order => {
+          const rawSymbol = order.symbol.replace('cmt_', '').replace('usdt', '').toUpperCase();
+          const side = order.side.includes('long') ? 'buy' : 'sell';
+
+          return {
+            id: order.orderId,
+            symbol: (symbol || rawSymbol) as AllowedPair,
+            side: side as OrderSide,
+            type: order.orderType as OrderType,
+            size: parseFloat(order.size),
+            price: parseFloat(order.priceAvg) || parseFloat(order.price),
+            timestamp: parseInt(order.cTime)
+          };
+        });
+      } catch (error) {
+        console.error('Error fetching order history:', error);
+        return [];
+      }
+    });
+  }
+
+  /**
+   * Get trade (fill) details.
+   * Required by hackathon guide step 11.
+   */
+  async getTradeDetails(symbol?: AllowedPair, limit: number = 100): Promise<Array<{
+    tradeId: string;
+    orderId: string;
+    symbol: AllowedPair;
+    side: OrderSide;
+    price: number;
+    size: number;
+    fee: number;
+    timestamp: number;
+  }>> {
+    this.ensureConnected();
+    if (symbol) this.validateSymbol(symbol);
+
+    // Route to paper trading if disabled
+    if (this.usePaperTrading()) {
+      return [];
+    }
+
+    return this.rateLimitedRequest(async () => {
+      try {
+        const params: Record<string, string> = {
+          pageSize: limit.toString()
+        };
+        if (symbol) {
+          params.symbol = this.toWeexSymbol(symbol);
+        }
+
+        interface WeexTradeDetail {
+          tradeId: string;
+          orderId: string;
+          symbol: string;
+          side: string;
+          price: string;
+          size: string;
+          fee: string;
+          feeAsset: string;
+          cTime: string;
+        }
+
+        const data = await this.authenticatedRequest<WeexTradeDetail[]>(
+          'GET',
+          '/capi/v2/trade/fills',
+          params
+        );
+
+        return data.map(trade => {
+          const rawSymbol = trade.symbol.replace('cmt_', '').replace('usdt', '').toUpperCase();
+          const side = trade.side.includes('long') ? 'buy' : 'sell';
+
+          return {
+            tradeId: trade.tradeId,
+            orderId: trade.orderId,
+            symbol: (symbol || rawSymbol) as AllowedPair,
+            side: side as OrderSide,
+            price: parseFloat(trade.price),
+            size: parseFloat(trade.size),
+            fee: parseFloat(trade.fee),
+            timestamp: parseInt(trade.cTime)
+          };
+        });
+      } catch (error) {
+        console.error('Error fetching trade details:', error);
+        return [];
       }
     });
   }

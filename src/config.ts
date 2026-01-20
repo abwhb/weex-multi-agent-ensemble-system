@@ -26,6 +26,7 @@ dotenv.config();
 export const config = {
   /**
    * WEEX API configuration.
+   * Using Contract/Futures API for AI Wars Hackathon.
    */
   weex: {
     /** API key for authentication. */
@@ -34,10 +35,10 @@ export const config = {
     apiSecret: process.env.WEEX_API_SECRET || '',
     /** API passphrase. */
     passphrase: process.env.WEEX_API_PASSPHRASE || '',
-    /** Base URL for API requests (Spot API). */
-    baseUrl: process.env.WEEX_BASE_URL || 'https://api-spot.weex.com',
+    /** Base URL for API requests (Contract/Futures API for hackathon). */
+    baseUrl: process.env.WEEX_BASE_URL || 'https://api-contract.weex.com',
     /** WebSocket URL for real-time data. */
-    wsUrl: process.env.WEEX_WS_URL || 'wss://ws-spot.weex.com'
+    wsUrl: process.env.WEEX_WS_URL || 'wss://ws-contract.weex.com'
   },
 
   /**
