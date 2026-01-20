@@ -63,6 +63,7 @@ import { config, validateConfig, getConfigSummary } from './config';
 import { MomentumAgent } from './agents/MomentumAgent';
 import { MeanReversionAgent } from './agents/MeanReversionAgent';
 import { VolatilityAgent } from './agents/VolatilityAgent';
+import { EMAStrategyAgent } from './agents/EMAStrategyAgent';
 
 // Meta-learner
 import { Ensemble } from './meta-learner/Ensemble';
@@ -124,6 +125,7 @@ class TradingSystem {
   private momentumAgent: MomentumAgent;
   private meanReversionAgent: MeanReversionAgent;
   private volatilityAgent: VolatilityAgent;
+  private emaStrategyAgent: EMAStrategyAgent;
 
   // State
   private isRunning: boolean = false;
@@ -151,6 +153,7 @@ class TradingSystem {
     this.momentumAgent = null as any;
     this.meanReversionAgent = null as any;
     this.volatilityAgent = null as any;
+    this.emaStrategyAgent = null as any;
     this.ensemble = null as any;
     this.performanceTracker = null as any;
   }
@@ -211,6 +214,22 @@ class TradingSystem {
       volExpansionThreshold: config.agents.volatility.volExpansionThreshold
     });
 
+    // Initialize EMA Strategy Agent (User's custom strategy)
+    this.emaStrategyAgent = new EMAStrategyAgent({
+      lookbackPeriod: config.agents.emaStrategy.lookback,
+      threshold: config.agents.emaStrategy.threshold,
+      modelPath: config.agents.emaStrategy.modelPath,
+      apiKey: config.agents.emaStrategy.apiKey,
+      model: config.agents.emaStrategy.model,
+      temperature: config.agents.emaStrategy.temperature,
+      shortEMA: config.agents.emaStrategy.shortEMA,
+      longEMA: config.agents.emaStrategy.longEMA,
+      rsiPeriod: config.agents.emaStrategy.rsiPeriod,
+      rsiOverbought: config.agents.emaStrategy.rsiOverbought,
+      rsiOversold: config.agents.emaStrategy.rsiOversold,
+      volumeThreshold: config.agents.emaStrategy.volumeThreshold
+    }, 0.4); // Higher weight for user's custom strategy
+
     // Initialize ensemble
     this.ensemble = new Ensemble({
       minConfidence: config.ensemble.minConfidence,
@@ -224,6 +243,7 @@ class TradingSystem {
     this.ensemble.registerAgent(this.momentumAgent);
     this.ensemble.registerAgent(this.meanReversionAgent);
     this.ensemble.registerAgent(this.volatilityAgent);
+    this.ensemble.registerAgent(this.emaStrategyAgent); // User's custom EMA strategy
 
     // Initialize performance tracker
     this.performanceTracker = new PerformanceTracker();
@@ -237,11 +257,6 @@ class TradingSystem {
   async initialize(): Promise<void> {
     try {
       systemLog.banner('WEEX Multi-Agent Trading System');
-
-      // Show paper mode warning
-      if (config.trading.mode === 'paper') {
-        tradeLog.paperMode();
-      }
 
       // Validate configuration
       validateConfig();
@@ -258,7 +273,20 @@ class TradingSystem {
       await this.ensemble.initialize();
 
       systemLog.separator('Initialization Complete');
-      systemLog.info(`Trading mode: ${config.trading.mode.toUpperCase()}`);
+
+      // Extra clear trading mode status
+      const configMode = config.trading.mode;
+      const controllerEnabled = this.tradingController.isEnabled();
+      const isPaperTrading = configMode === 'paper' || !controllerEnabled;
+
+      if (isPaperTrading) {
+        tradeLog.paperMode();
+        systemLog.info('SAFETY: All trades will be SIMULATED (paper trading)');
+      } else {
+        systemLog.warn('⚠️  LIVE TRADING ENABLED - Real orders will be placed!');
+      }
+
+      systemLog.info(`Config mode: ${configMode.toUpperCase()}`);
       systemLog.info(`Agents: ${this.ensemble.getAgents().map(a => a.name).join(', ')}`);
       systemLog.info(`Symbols: ${config.trading.symbols.join(', ')}`);
       systemLog.info(`Max leverage: ${config.trading.maxLeverage}x`);

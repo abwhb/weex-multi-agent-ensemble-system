@@ -59,8 +59,8 @@ export const config = {
     maxDailyDrawdown: 0.05,
     /** Default timeframe for analysis. */
     defaultTimeframe: '5m' as const,
-    /** Symbols to trade (subset of allowed pairs). */
-    symbols: ['BTC', 'ETH', 'SOL'] as const
+    /** Symbols to trade (BTC only for focused trading). */
+    symbols: ['BTC'] as const
   },
 
   /**
@@ -109,7 +109,7 @@ export const config = {
       /** Gemini API key (from environment). */
       apiKey: process.env.GEMINI_API_KEY || '',
       /** Gemini model to use. */
-      model: process.env.GEMINI_MODEL || 'gemini-1.5-flash',
+      model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
       /** Temperature for AI responses (0-2, lower = more deterministic). */
       temperature: parseFloat(process.env.GEMINI_TEMPERATURE || '0.3'),
       /** Maximum tokens in response. */
@@ -121,6 +121,33 @@ export const config = {
       /** Lookback period. */
       lookback: 100,
       /** Model path (not used for Gemini but required by AgentConfig). */
+      modelPath: ''
+    },
+    /** EMAStrategyAgent settings (User's custom strategy). */
+    emaStrategy: {
+      /** Gemini API key for AI enhancement. */
+      apiKey: process.env.GEMINI_API_KEY || '',
+      /** Gemini model to use. */
+      model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+      /** Temperature for AI (lower = more deterministic). */
+      temperature: 0.2,
+      /** Short EMA period. */
+      shortEMA: 20,
+      /** Long EMA period. */
+      longEMA: 50,
+      /** RSI period. */
+      rsiPeriod: 14,
+      /** RSI overbought threshold. */
+      rsiOverbought: 70,
+      /** RSI oversold threshold. */
+      rsiOversold: 30,
+      /** Volume ratio threshold for confirmation (1.5x = 150% of average). */
+      volumeThreshold: 1.5,
+      /** Confidence threshold. */
+      threshold: 0.55,
+      /** Lookback period for analysis. */
+      lookback: 100,
+      /** Model path (not used but required). */
       modelPath: ''
     }
   },

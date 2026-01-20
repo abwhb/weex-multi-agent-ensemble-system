@@ -19,4 +19,5 @@ export { MomentumAgent, MomentumAgentConfig } from './MomentumAgent';
 export { MeanReversionAgent, MeanReversionAgentConfig } from './MeanReversionAgent';
 export { VolatilityAgent, VolatilityAgentConfig } from './VolatilityAgent';
 export { GeminiAgent, GeminiAgentConfig } from './GeminiAgent';
+export { EMAStrategyAgent, EMAStrategyConfig } from './EMAStrategyAgent';
 

@@ -1,6 +1,6 @@
 {
   "version": "1.0.0",
-  "exportTime": "2026-01-20T14:17:08.441Z",
+  "exportTime": "2026-01-20T15:25:33.268Z",
   "modelVersions": {
     "MomentumAgent/LSTM": "1.0.0",
     "MeanReversionAgent/RegimeClassifier": "1.0.0",
