@@ -108,8 +108,8 @@ export const config = {
     gemini: {
       /** Gemini API key (from environment). */
       apiKey: process.env.GEMINI_API_KEY || '',
-      /** Gemini model to use. */
-      model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+      /** Gemini model to use (gemini-2.5-flash stable, or gemini-3-flash-preview for latest). */
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
       /** Temperature for AI responses (0-2, lower = more deterministic). */
       temperature: parseFloat(process.env.GEMINI_TEMPERATURE || '0.3'),
       /** Maximum tokens in response. */
@@ -127,8 +127,8 @@ export const config = {
     emaStrategy: {
       /** Gemini API key for AI enhancement. */
       apiKey: process.env.GEMINI_API_KEY || '',
-      /** Gemini model to use. */
-      model: process.env.GEMINI_MODEL || 'gemini-2.0-flash',
+      /** Gemini model to use (gemini-2.5-flash stable, or gemini-3-flash-preview for latest). */
+      model: process.env.GEMINI_MODEL || 'gemini-2.5-flash',
       /** Temperature for AI (lower = more deterministic). */
       temperature: 0.2,
       /** Short EMA period. */

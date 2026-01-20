@@ -153,7 +153,7 @@ export class GeminiAgent extends BaseAgent {
     super('GeminiAgent', config, initialWeight);
 
     this.geminiConfig = {
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       temperature: 0.3,
       maxTokens: 1024,
       candleWindow: 50,

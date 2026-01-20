@@ -159,7 +159,7 @@ export class EMAStrategyAgent extends BaseAgent {
     super('EMAStrategyAgent', config, initialWeight);
 
     this.strategyConfig = {
-      model: 'gemini-2.0-flash',
+      model: 'gemini-2.5-flash',
       temperature: 0.2,
       shortEMA: 20,
       longEMA: 50,
